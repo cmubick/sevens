@@ -64,9 +64,12 @@ final class GameScene: SKScene {
     private struct Metrics {
         let size: CGSize
         let u: CGFloat
+        /// Wide layouts (iPad on its side) lay the suits out as rows instead of columns.
+        let isLandscape: Bool
         let handScale: CGFloat
         let handBottomRowY: CGFloat
         let handRowStep: CGFloat
+        let handPerRow: Int
         let infoY: CGFloat
         let promptY: CGFloat
         let eventY: CGFloat
@@ -74,20 +77,26 @@ final class GameScene: SKScene {
         let badgeSize: CGSize
         let tableScale: CGFloat
         let tableMidY: CGFloat
+        /// Distance between neighboring ranks in a run.
         let step: CGFloat
-        let columnSpacing: CGFloat
+        /// Distance between suits: columns when upright, rows when on its side.
+        let suitSpacing: CGFloat
         let tableBottom: CGFloat
 
         init(size: CGSize, insets: UIEdgeInsets) {
             self.size = size
-            let u = min(size.width / 390, size.height / 780)
+            isLandscape = size.width > size.height
+            let u = isLandscape
+                ? min(size.width / 844, size.height / 600)
+                : min(size.width / 390, size.height / 780)
             self.u = u
 
             handScale = u
+            handPerRow = isLandscape ? 14 : 7
             let handCardHeight = CardNode.size.height * u
             handBottomRowY = insets.bottom + 10 * u + handCardHeight / 2
             handRowStep = handCardHeight * 0.6
-            let handTop = insets.bottom + 10 * u + handCardHeight * 1.6 + 12 * u
+            let handTop = insets.bottom + 10 * u + handCardHeight * (isLandscape ? 1.0 : 1.6) + 12 * u
             infoY = handTop + 12 * u
             promptY = handTop + 38 * u
             eventY = handTop + 64 * u
@@ -95,28 +104,68 @@ final class GameScene: SKScene {
             self.tableBottom = tableBottom
 
             let badgeTop = size.height - insets.top - 6 * u
-            badgeSize = CGSize(width: (size.width - 48 * u) / 3, height: 48 * u)
+            badgeSize = CGSize(width: min((size.width - 48 * u) / 3, 220 * u), height: 48 * u)
             badgeY = badgeTop - badgeSize.height / 2
             let tableTop = badgeTop - badgeSize.height - 10 * u
-
-            columnSpacing = min((size.width - 24 * u) / 4, 92 * u)
-            let tableCardWidth = min(columnSpacing - 10 * u, 62 * u)
-            tableScale = tableCardWidth / CardNode.size.width
-            let tableCardHeight = CardNode.size.height * tableScale
-            step = min((tableTop - tableBottom - tableCardHeight) / 12, tableCardHeight * 0.42)
             tableMidY = (tableTop + tableBottom) / 2
+
+            if isLandscape {
+                suitSpacing = (tableTop - tableBottom) / 4
+                let tableCardHeight = min(suitSpacing - 8 * u, 120 * u)
+                tableScale = tableCardHeight / CardNode.size.height
+                let tableCardWidth = CardNode.size.width * tableScale
+                step = min((size.width - 40 * u - tableCardWidth) / 12, tableCardWidth * 0.78)
+            } else {
+                suitSpacing = min((size.width - 24 * u) / 4, 92 * u)
+                let tableCardWidth = min(suitSpacing - 10 * u, 62 * u)
+                tableScale = tableCardWidth / CardNode.size.width
+                let tableCardHeight = CardNode.size.height * tableScale
+                step = min((tableTop - tableBottom - tableCardHeight) / 12, tableCardHeight * 0.42)
+            }
+        }
+
+        var tableCardSize: CGSize {
+            CGSize(width: CardNode.size.width * tableScale, height: CardNode.size.height * tableScale)
         }
 
         func slot(_ face: Face) -> CGPoint {
-            let column = CGFloat(Suit.displayOrder.firstIndex(of: face.suit) ?? 0)
-            return CGPoint(
-                x: size.width / 2 + (column - 1.5) * columnSpacing,
-                y: tableMidY + CGFloat(face.rank - Face.startRank) * step
-            )
+            let suit = CGFloat(Suit.displayOrder.firstIndex(of: face.suit) ?? 0)
+            let offset = CGFloat(face.rank - Face.startRank) * step
+            if isLandscape {
+                return CGPoint(x: size.width / 2 + offset, y: tableMidY + (1.5 - suit) * suitSpacing)
+            }
+            return CGPoint(x: size.width / 2 + (suit - 1.5) * suitSpacing, y: tableMidY + offset)
+        }
+
+        /// Stacking order on the table, so the corner of every card stays visible.
+        func tableZ(_ face: Face) -> CGFloat {
+            CGFloat((isLandscape ? face.rank : 20 - face.rank) * 3)
+        }
+
+        /// Where to draw the spot for placing `face`. A fresh suit gets a whole card;
+        /// the next card in a run gets just the strip that sticks out past the run.
+        func target(for face: Face, run: ClosedRange<Int>?) -> (position: CGPoint, size: CGSize) {
+            var position = slot(face)
+            var size = tableCardSize
+            guard let run else { return (position, size) }
+            let outward: CGFloat = face.rank > run.upperBound ? 1 : -1
+            if isLandscape {
+                position.x += outward * (size.width - step) / 2
+                size.width = step
+            } else {
+                position.y += outward * (size.height - step) / 2
+                size.height = step
+            }
+            return (position, size)
+        }
+
+        /// The right edge of the table when the suits are laid out as rows.
+        var tableRight: CGFloat {
+            size.width / 2 + 6 * step + tableCardSize.width / 2
         }
 
         func badge(_ player: Int) -> CGPoint {
-            CGPoint(x: size.width * CGFloat(player * 2 - 1) / 6, y: badgeY)
+            CGPoint(x: size.width / 2 + CGFloat(player - 2) * (badgeSize.width + 12 * u), y: badgeY)
         }
     }
 
@@ -176,12 +225,81 @@ final class GameScene: SKScene {
             rebuildOverlay()
             return
         }
+        if name == "help" {
+            overlay = .help(page: 2)
+            rebuildOverlay()
+            return
+        }
+        if name == "practice" {
+            // Jump to the moment North's joker kills the player's 10 of spades.
+            UserDefaults.standard.set(true, forKey: HelpPage.seenKey)
+            startPractice()
+            let stop = 11
+            guard var position = round else { return }
+            for step in Practice.script.prefix(stop) {
+                switch step {
+                case .you(let move, _), .bot(let move): try? position.apply(move)
+                case .note: break
+                }
+            }
+            generation += 1
+            round = position
+            practice?.index = stop
+            eventText = "North played a joker as 10\(Suit.spades.glyph)"
+            advance()
+            return
+        }
+        if name == "showcase" || name == "showcaseJoker" {
+            // A believable mid-game table: two bot-played rounds for the scores,
+            // then a third round stopped on the player's turn.
+            UserDefaults.standard.set(true, forKey: HelpPage.seenKey)
+            settings = MatchSettings(length: .long, jokers: 1)
+            var game = Match(settings: settings)
+            var current = Round(hands: [[], [], [], []])
+            for seed in UInt64(1)...200 {
+                var generator = SeededGenerator(seed: seed)
+                game = Match(settings: settings)
+                for _ in 0..<2 {
+                    var finished = game.dealRound(using: &generator)
+                    while finished.winner == nil, let move = Bot.chooseMove(in: finished) {
+                        try? finished.apply(move)
+                    }
+                    game.record(finished)
+                }
+                current = game.dealRound(using: &generator)
+                var moves = 0
+                var found = false
+                while current.winner == nil, let move = Bot.chooseMove(in: current) {
+                    if moves >= 20, current.actor == 0, current.phase == .play,
+                       current.hands[0].count >= 8,
+                       current.legalMoves().count >= 2, current.hands[0].contains(where: \.isJoker) {
+                        found = true
+                        break
+                    }
+                    try? current.apply(move)
+                    moves += 1
+                }
+                if found { break }
+            }
+            generation += 1
+            match = game
+            cardNodes.values.forEach { $0.removeFromParent() }
+            cardNodes = [:]
+            round = current
+            selectedJoker = name == "showcaseJoker" ? current.hands[0].first(where: \.isJoker) : nil
+            overlay = nil
+            eventText = "East played a card"
+            rebuildOverlay()
+            sync(animated: false)
+            refreshHUD()
+            return
+        }
         var mine: [Card]
         var jokers = 0
         var turn = 0
         var length = GameLength.epic
         switch name {
-        case "joker":
+        case "joker", "jokerPick":
             jokers = 1
             mine = [.joker(0), f(.spades, 8), f(.spades, 9), f(.diamonds, 13), f(.clubs, 2)]
         case "ask":
@@ -216,7 +334,8 @@ final class GameScene: SKScene {
         cardNodes.values.forEach { $0.removeFromParent() }
         cardNodes = [:]
         round = Round(hands: hands, table: table, turn: turn)
-        selectedJoker = nil
+        // "jokerPick" opens with the joker already selected, to show the placement spots.
+        selectedJoker = name == "jokerPick" ? .joker(0) : nil
         overlay = nil
         eventText = "Test scenario: \(name)"
         rebuildOverlay()
@@ -235,11 +354,7 @@ final class GameScene: SKScene {
         // Empty slots that show where each suit starts.
         slotLayer.removeAllChildren()
         for suit in Suit.allCases {
-            let cardSize = CGSize(
-                width: CardNode.size.width * m.tableScale,
-                height: CardNode.size.height * m.tableScale
-            )
-            let slot = SKShapeNode(rectOf: cardSize, cornerRadius: 7 * m.tableScale)
+            let slot = SKShapeNode(rectOf: m.tableCardSize, cornerRadius: 7 * m.tableScale)
             slot.position = m.slot(Face(suit, Face.startRank))
             slot.fillColor = SKColor(white: 0, alpha: 0.15)
             slot.strokeColor = SKColor(white: 1, alpha: 0.25)
@@ -384,14 +499,10 @@ final class GameScene: SKScene {
 
         let m = metrics
         let u = m.u
-        let width = size.width - 28 * u
-        let height = (isNote ? 124 : 96) * u
-        let bubble = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 14 * u)
-        bubble.position = CGPoint(x: size.width / 2, y: m.tableBottom + height / 2 + 2 * u)
-        bubble.fillColor = Style.panel
-        bubble.strokeColor = Style.gold
-        bubble.lineWidth = 1.5
-        coachLayer.addChild(bubble)
+        // Upright, the bubble sits under the table. On its side the table fills
+        // that space, so the bubble goes in the corner to the right of the hand.
+        let beside = m.isLandscape
+        let width = beside ? size.width / 2 - 200 * u : min(size.width - 28 * u, 520 * u)
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
@@ -405,8 +516,20 @@ final class GameScene: SKScene {
         label.numberOfLines = 0
         label.preferredMaxLayoutWidth = width - 28 * u
         label.verticalAlignmentMode = .center
-        label.position = CGPoint(x: 0, y: isNote ? 17 * u : 0)
         label.zPosition = 1
+
+        let buttonSpace = isNote ? 40 * u : 0
+        let height = label.frame.height + 28 * u + buttonSpace
+        let bubble = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 14 * u)
+        bubble.position = beside
+            ? CGPoint(x: size.width - 14 * u - width / 2,
+                      y: max(safeInsets.bottom + 10 * u + height / 2, (safeInsets.bottom + m.tableBottom) / 2))
+            : CGPoint(x: size.width / 2, y: m.tableBottom + height / 2 + 2 * u)
+        bubble.fillColor = Style.panel
+        bubble.strokeColor = Style.gold
+        bubble.lineWidth = 1.5
+        coachLayer.addChild(bubble)
+        label.position = CGPoint(x: 0, y: buttonSpace / 2)
         bubble.addChild(label)
 
         if isNote {
@@ -418,7 +541,7 @@ final class GameScene: SKScene {
                 self?.practice?.index += 1
                 self?.continuePractice()
             }
-            next.position = CGPoint(x: 0, y: -height / 2 + 23 * u)
+            next.position = CGPoint(x: 0, y: -height / 2 + 26 * u)
             next.zPosition = 1
             bubble.addChild(next)
         }
@@ -574,7 +697,7 @@ final class GameScene: SKScene {
                 placements[joker ?? .face(face)] = Placement(
                     position: m.slot(face),
                     scale: m.tableScale,
-                    z: CGFloat((20 - rank) * 3),
+                    z: m.tableZ(face),
                     standIn: joker == nil ? nil : face
                 )
             }
@@ -591,7 +714,7 @@ final class GameScene: SKScene {
         let hand = sortedHand(round.hands[0])
         let playable = playableCards(in: round)
         let myTurn = round.actor == 0
-        let perRow = 7
+        let perRow = m.handPerRow
         let rows = stride(from: 0, to: hand.count, by: perRow).map {
             Array(hand[$0..<min($0 + perRow, hand.count)])
         }
@@ -599,7 +722,7 @@ final class GameScene: SKScene {
         for (rowIndex, row) in rows.enumerated() {
             let rowsBelow = rows.count - 1 - rowIndex
             let baseY = m.handBottomRowY + CGFloat(rowsBelow) * m.handRowStep
-                + (rows.count == 1 ? m.handRowStep / 2 : 0)
+                + (rows.count == 1 && !m.isLandscape ? m.handRowStep / 2 : 0)
             let spread = row.count > 1
                 ? min(cardWidth + 4 * m.u, (size.width - 24 * m.u - cardWidth) / CGFloat(row.count - 1))
                 : 0
@@ -727,22 +850,10 @@ final class GameScene: SKScene {
             } else if selectedJoker != nil {
                 promptLabel.text = "Tap a glowing spot to place the joker"
                 promptLabel.fontSize = 16 * m.u
-                // A fresh suit gets a whole-card target; the next card in a run
-                // gets just the strip that would stay visible once it is down.
-                let cardSize = CGSize(
-                    width: CardNode.size.width * m.tableScale,
-                    height: CardNode.size.height * m.tableScale
-                )
                 for face in round.table.openFaces {
-                    var size = cardSize
-                    var position = m.slot(face)
-                    if let run = round.table.runs[face.suit] {
-                        size.height = m.step
-                        let offset = (cardSize.height - m.step) / 2
-                        position.y += face.rank > run.upperBound ? offset : -offset
-                    }
-                    let target = TargetNode(face: face, size: size, scale: m.tableScale)
-                    target.position = position
+                    let spot = m.target(for: face, run: round.table.runs[face.suit])
+                    let target = TargetNode(face: face, size: spot.size, scale: m.tableScale)
+                    target.position = spot.position
                     targetLayer.addChild(target)
                 }
             } else {
