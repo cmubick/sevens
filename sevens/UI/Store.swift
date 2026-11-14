@@ -8,6 +8,7 @@
 
 import Foundation
 import StoreKit
+import UIKit
 
 final class Store {
 
@@ -49,6 +50,32 @@ final class Store {
     /// For screenshots and manual testing: pretend the full game is or is not owned.
     var debugOverride: Bool?
     #endif
+    /// Detail of the most recent failure, for the diagnostic line on the store screen.
+    private(set) var lastProblem: String?
+    private var lastOwnershipCheck = "not checked"
+
+    /// True for TestFlight and development builds, which use Apple's sandbox store.
+    static var isSandbox: Bool {
+        #if DEBUG
+        return true
+        #else
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        #endif
+    }
+
+    /// One line describing what the store currently knows. Shown only in sandbox builds.
+    var diagnostics: String {
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        var parts = [
+            "build \(build)",
+            "products \((fullGame == nil ? 0 : 1) + tips.count)/4",
+            "full game \(owned ? "owned" : "not owned")",
+            lastOwnershipCheck,
+        ]
+        if let lastProblem { parts.append(lastProblem) }
+        return parts.joined(separator: " · ")
+    }
+
     /// Called whenever products or the unlock change, so the screen can redraw.
     var onChange: (() -> Void)?
 
@@ -84,35 +111,70 @@ final class Store {
     /// Reads what the App Store says is owned. This is the source of truth for the unlock.
     private func refreshOwnership() async {
         var owned = false
+        var seen = 0
         for await entitlement in Transaction.currentEntitlements {
-            if case .verified(let transaction) = entitlement,
-               transaction.productID == Store.fullGameID,
-               transaction.revocationDate == nil {
-                owned = true
-            }
+            seen += 1
+            if owns(entitlement) { owned = true }
         }
+        // Belt and braces: also ask for the latest transaction for the unlock itself.
+        if !owned, let latest = await Transaction.latest(for: Store.fullGameID), owns(latest) {
+            owned = true
+        }
+        lastOwnershipCheck = "entitlements \(seen)"
         setUnlocked(owned)
     }
 
-    func buy(_ product: Product) async -> Outcome {
+    /// Whether this transaction is a live purchase of the full game.
+    private func owns(_ result: VerificationResult<Transaction>) -> Bool {
+        switch result {
+        case .verified(let transaction):
+            return transaction.productID == Store.fullGameID && transaction.revocationDate == nil
+        case .unverified(let transaction, let error):
+            if transaction.productID == Store.fullGameID {
+                lastProblem = "unverified: \(error)"
+            }
+            return false
+        }
+    }
+
+    /// Buys a product. Pass the window's scene so the App Store knows where to
+    /// show its payment sheet; without it the sheet can fail to appear.
+    func buy(_ product: Product, in scene: UIScene? = nil) async -> Outcome {
+        lastProblem = nil
         do {
-            switch try await product.purchase() {
+            let result: Product.PurchaseResult
+            if #available(iOS 17.0, *), let scene {
+                result = try await product.purchase(confirmIn: scene)
+            } else {
+                result = try await product.purchase()
+            }
+            switch result {
             case .success(let verification):
-                guard case .verified(let transaction) = verification else { return .failed }
-                if transaction.productID == Store.fullGameID {
-                    setUnlocked(true)
+                switch verification {
+                case .verified(let transaction):
+                    if transaction.productID == Store.fullGameID {
+                        setUnlocked(true)
+                    }
+                    await transaction.finish()
+                    onChange?()
+                    return .success
+                case .unverified(_, let error):
+                    lastProblem = "unverified: \(error)"
+                    onChange?()
+                    return .failed
                 }
-                await transaction.finish()
-                onChange?()
-                return .success
             case .pending:
+                lastProblem = "pending"
                 return .pending
             case .userCancelled:
+                lastProblem = "cancelled"
                 return .cancelled
             @unknown default:
+                lastProblem = "unknown purchase result"
                 return .failed
             }
         } catch {
+            lastProblem = "error: \(error)"
             return .failed
         }
     }
@@ -120,6 +182,22 @@ final class Store {
     /// Asks the App Store to re-send past purchases, for a new or restored device.
     func restore() async -> Bool {
         try? await AppStore.sync()
+        await refreshOwnership()
+        onChange?()
+        return isUnlocked
+    }
+
+    /// Shows Apple's sheet for typing in an offer code. A redeemed code arrives as
+    /// an ordinary purchase, so the unlock follows from the usual ownership check.
+    func redeemCode(in scene: UIWindowScene) async -> Bool {
+        lastProblem = nil
+        do {
+            try await AppStore.presentOfferCodeRedeemSheet(in: scene)
+        } catch {
+            lastProblem = "redeem error: \(error)"
+            onChange?()
+            return false
+        }
         await refreshOwnership()
         onChange?()
         return isUnlocked

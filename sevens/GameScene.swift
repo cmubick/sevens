@@ -29,6 +29,7 @@ final class GameScene: SKScene {
         case store
         case summary(points: [Int], winner: Int)
         case jokerWarning(Round.Move, Face)
+        case quitConfirm
     }
 
     private var settings = MatchSettings()
@@ -44,6 +45,9 @@ final class GameScene: SKScene {
     /// The line of feedback shown on the store screen after a purchase or restore.
     private var storeMessage = ""
     private var isBuying = false
+    /// The store's diagnostic line is hidden until the store title is tapped five times.
+    private var storeTitleTaps = 0
+    private var showsStoreDiagnostics = false
     /// Rounds the player has gone out first in during the current game.
     private var roundsWon = 0
     /// False for debug scenarios, so test positions never land in the history.
@@ -432,6 +436,7 @@ final class GameScene: SKScene {
 
     private func openStore() {
         storeMessage = ""
+        storeTitleTaps = 0
         overlay = .store
         rebuildOverlay()
     }
@@ -443,7 +448,7 @@ final class GameScene: SKScene {
         rebuildOverlay()
         Task { [weak self] in
             guard let self else { return }
-            let outcome = await self.store.buy(product)
+            let outcome = await self.store.buy(product, in: self.view?.window?.windowScene)
             self.isBuying = false
             switch outcome {
             case .success:
@@ -454,9 +459,30 @@ final class GameScene: SKScene {
             case .pending:
                 self.storeMessage = "Waiting for approval."
             case .cancelled:
-                self.storeMessage = ""
+                // Signing in to the App Store ends the first attempt, so say what to do next.
+                self.storeMessage = "Not purchased. Tap again to try."
             case .failed:
                 self.storeMessage = "The purchase didn't go through."
+            }
+            self.rebuildOverlay()
+        }
+    }
+
+    private func redeemCode() {
+        guard !isBuying, let scene = view?.window?.windowScene else { return }
+        isBuying = true
+        storeMessage = "Opening the App Store…"
+        rebuildOverlay()
+        Task { [weak self] in
+            guard let self else { return }
+            let unlocked = await self.store.redeemCode(in: scene)
+            self.isBuying = false
+            if unlocked {
+                Haptics.victory(game: false)
+                self.storeMessage = "Unlocked. Enjoy the full game!"
+            } else {
+                // A redeemed code can arrive a moment after the sheet closes.
+                self.storeMessage = ""
             }
             self.rebuildOverlay()
         }
@@ -539,6 +565,50 @@ final class GameScene: SKScene {
         eventText = ""
         rebuildOverlay()
         advance()
+    }
+
+    /// A quit game goes in the history once at least one round has been finished.
+    private var quitWillCount: Bool {
+        practice == nil && recordsHistory && match.roundsPlayed >= 1
+    }
+
+    private func askToQuit() {
+        guard round != nil, practice == nil, overlay == nil else { return }
+        // Stop the bots while the question is up.
+        generation += 1
+        overlay = .quitConfirm
+        rebuildOverlay()
+    }
+
+    private func keepPlaying() {
+        overlay = nil
+        rebuildOverlay()
+        advance()
+    }
+
+    private func quitGame() {
+        if quitWillCount {
+            history.add(GameRecord(
+                date: Date(),
+                target: settings.length.targetScore,
+                jokers: settings.jokers,
+                scores: match.scores,
+                rounds: match.roundsPlayed,
+                roundsWon: roundsWon,
+                quit: true
+            ))
+            HistoryStore.save(history)
+        }
+        Haptics.thump()
+        generation += 1
+        round = nil
+        match = Match(settings: settings)
+        selectedJoker = nil
+        eventText = ""
+        overlay = .menu
+        sync(animated: false)
+        refreshHUD()
+        rebuildOverlay()
     }
 
     private func endPractice() {
@@ -871,6 +941,7 @@ final class GameScene: SKScene {
 
         hudLayer.childNode(withName: "ask")?.removeFromParent()
         hudLayer.childNode(withName: "exitPractice")?.removeFromParent()
+        hudLayer.childNode(withName: "quitGame")?.removeFromParent()
         refreshCoach()
         targetLayer.removeAllChildren()
         eventLabel.text = eventText
@@ -898,6 +969,17 @@ final class GameScene: SKScene {
             hudLayer.addChild(exit)
         } else {
             infoLabel.text = "You · \(count) card\(count == 1 ? "" : "s") · \(match.scores[0]) pts · game to \(settings.length.targetScore)"
+            let quit = ButtonNode(
+                text: "Quit",
+                size: CGSize(width: 48 * m.u, height: 22 * m.u),
+                fontSize: 12 * m.u,
+                fill: SKColor(white: 1, alpha: 0.12),
+                textColor: .white
+            ) { [weak self] in self?.askToQuit() }
+            quit.name = "quitGame"
+            quit.position = CGPoint(x: 12 * m.u + 24 * m.u, y: infoLabel.position.y)
+            quit.zPosition = 400
+            hudLayer.addChild(quit)
         }
 
         guard let actor else { return }
@@ -1071,6 +1153,7 @@ final class GameScene: SKScene {
         case .help: height = 470 * m.u
         case .summary: height = 350 * m.u
         case .jokerWarning: height = 250 * m.u
+        case .quitConfirm: height = 250 * m.u
         }
         let panel = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 18 * m.u)
         panel.position = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -1091,6 +1174,8 @@ final class GameScene: SKScene {
             buildHelp(in: panel, width: width, page: page, m: m)
         case .summary(let points, let winner):
             buildSummary(in: panel, width: width, points: points, winner: winner, m: m)
+        case .quitConfirm:
+            buildQuitConfirm(in: panel, width: width, m: m)
         case .jokerWarning(let move, let face):
             buildJokerWarning(in: panel, width: width, move: move, face: face, m: m)
         }
@@ -1259,14 +1344,23 @@ final class GameScene: SKScene {
                 ) {}
                 add(waiting, to: panel, y: 66 * u)
             }
+            let small = CGSize(width: (width - 50 * u) / 2, height: 28 * u)
             let restore = ButtonNode(
                 text: "Restore purchases",
-                size: CGSize(width: 170 * u, height: 28 * u),
+                size: small,
                 fontSize: 13 * u,
                 fill: SKColor(white: 1, alpha: 0.12),
                 textColor: .white
             ) { [weak self] in self?.restorePurchases() }
-            add(restore, to: panel, y: 22 * u)
+            add(restore, to: panel, x: -(small.width / 2 + 5 * u), y: 22 * u)
+            let redeem = ButtonNode(
+                text: "Redeem code",
+                size: small,
+                fontSize: 13 * u,
+                fill: SKColor(white: 1, alpha: 0.12),
+                textColor: .white
+            ) { [weak self] in self?.redeemCode() }
+            add(redeem, to: panel, x: small.width / 2 + 5 * u, y: 22 * u)
         }
 
         // Tips are always optional and never unlock anything.
@@ -1298,6 +1392,31 @@ final class GameScene: SKScene {
 
         add(Style.label(storeMessage, size: 14 * u, font: Style.bold, color: Style.gold),
             to: panel, y: (unlocked ? -70 : -150) * u)
+
+        // Hidden support tool: five taps on the title show what the App Store told the app.
+        let secret = ButtonNode(
+            text: "",
+            size: CGSize(width: 240 * u, height: 36 * u),
+            fontSize: 1,
+            fill: .clear,
+            outlined: false
+        ) { [weak self] in
+            guard let self else { return }
+            self.storeTitleTaps += 1
+            if self.storeTitleTaps >= 5 {
+                self.storeTitleTaps = 0
+                self.showsStoreDiagnostics.toggle()
+                self.rebuildOverlay()
+            }
+        }
+        add(secret, to: panel, y: 218 * u)
+
+        if showsStoreDiagnostics {
+            let detail = Style.label(store.diagnostics, size: 9.5 * u, color: SKColor(white: 1, alpha: 0.55))
+            detail.numberOfLines = 0
+            detail.preferredMaxLayoutWidth = width - 32 * u
+            add(detail, to: panel, y: -172 * u)
+        }
 
         let close = ButtonNode(
             text: "Close",
@@ -1401,7 +1520,7 @@ final class GameScene: SKScene {
             let square = SKShapeNode(rectOf: CGSize(width: side, height: side), cornerRadius: 6 * u)
             let fill: SKColor
             let text: SKColor
-            switch game.place {
+            switch game.quit ? 0 : game.place {
             case 1: (fill, text) = (Style.gold, Style.ink)
             case 2: (fill, text) = (SKColor(white: 1, alpha: 0.85), Style.ink)
             case 3: (fill, text) = (SKColor(white: 1, alpha: 0.25), .white)
@@ -1409,14 +1528,14 @@ final class GameScene: SKScene {
             }
             square.fillColor = fill
             square.strokeColor = .clear
-            let label = Style.label("\(game.place)", size: 14 * u, font: Style.bold, color: text)
+            let label = Style.label(game.quit ? "Q" : "\(game.place)", size: 14 * u, font: Style.bold, color: text)
             label.zPosition = 1
             square.addChild(label)
             add(square, to: panel,
                 x: (CGFloat(index) - CGFloat(strip.count - 1) / 2) * (side + gap),
                 y: -84 * u)
         }
-        add(Style.label("1 is a win · lower points per round is better", size: 11.5 * u, color: faint), to: panel, y: -118 * u)
+        add(Style.label("1 is a win · Q is a game you quit · fewer points is better", size: 11.5 * u, color: faint), to: panel, y: -118 * u)
     }
 
     private func buildHelp(in panel: SKNode, width: CGFloat, page index: Int, m: Metrics) {
@@ -1569,6 +1688,36 @@ final class GameScene: SKScene {
             }
         }
         add(button, to: panel, y: -130 * u)
+    }
+
+    private func buildQuitConfirm(in panel: SKNode, width: CGFloat, m: Metrics) {
+        let u = m.u
+        add(Style.label("Quit this game?", size: 22 * u, font: Style.bold, color: Style.gold), to: panel, y: 88 * u)
+
+        let body = Style.label(
+            quitWillCount
+                ? "It will go in your history as a game you quit, which counts as finishing last."
+                : "No round has finished yet, so this game won't count in your history.",
+            size: 15 * u
+        )
+        body.numberOfLines = 0
+        body.preferredMaxLayoutWidth = width - 48 * u
+        add(body, to: panel, y: 26 * u)
+
+        let size = CGSize(width: (width - 52 * u) / 2, height: 46 * u)
+        let stay = ButtonNode(text: "Keep playing", size: size, fontSize: 16 * u) { [weak self] in
+            self?.keepPlaying()
+        }
+        add(stay, to: panel, x: -(size.width / 2 + 6 * u), y: -78 * u)
+
+        let leave = ButtonNode(
+            text: "Quit game",
+            size: size,
+            fontSize: 16 * u,
+            fill: SKColor(white: 1, alpha: 0.12),
+            textColor: .white
+        ) { [weak self] in self?.quitGame() }
+        add(leave, to: panel, x: size.width / 2 + 6 * u, y: -78 * u)
     }
 
     private func buildJokerWarning(in panel: SKNode, width: CGFloat, move: Round.Move, face: Face, m: Metrics) {

@@ -487,6 +487,30 @@ struct HistoryTests {
         #expect(try JSONDecoder().decode(GameHistory.self, from: data) == history)
     }
 
+    @Test func quitGamesCountAsLastPlace() {
+        // Leading on points when quitting still counts as last.
+        let quit = GameRecord(date: Date(timeIntervalSince1970: 0), target: 100, jokers: 0,
+                              scores: [5, 50, 60, 70], rounds: 2, roundsWon: 1, quit: true)
+        #expect(quit.place == 4)
+        #expect(!quit.won)
+        #expect(!game(10).quit)
+
+        let summary = HistorySummary([game(10), quit])
+        #expect(summary.games == 2)
+        #expect(summary.wins == 1)
+        #expect(summary.averagePlace == 2.5)
+    }
+
+    @Test func historySavedBeforeQuittingExistedStillLoads() throws {
+        let old = """
+        {"games":[{"date":0,"target":100,"jokers":0,"scores":[10,50,60,70],"rounds":4,"roundsWon":1}]}
+        """
+        let history = try JSONDecoder().decode(GameHistory.self, from: Data(old.utf8))
+        #expect(history.games.count == 1)
+        #expect(history.games[0].quit == false)
+        #expect(history.games[0].place == 1)
+    }
+
     @Test func historyIsCapped() {
         var history = GameHistory()
         for _ in 0..<(GameHistory.limit + 5) { history.add(game(10)) }

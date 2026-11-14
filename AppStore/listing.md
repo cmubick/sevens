@@ -114,13 +114,14 @@ The project already declares that the app uses no non-exempt encryption, so App 
 >
 > To see the free features quickly: on the start menu, tap "Practice round" for a short guided hand and "How to play" for the rules. To play a full game, choose "Short · 50" and tap "Deal".
 >
-> In-app purchases are on the store screen, opened with "Unlock full game" on the start menu or by tapping any option marked with a lock. The Full Game purchase unlocks jokers, the Long and Epic game lengths, and the History screen. The three tips are consumable, optional, and unlock nothing. "Restore purchases" is on the same screen.
+> In-app purchases are on the store screen, opened with "Unlock full game" on the start menu or by tapping any option marked with a lock. The Full Game purchase unlocks jokers, the Long and Epic game lengths, and the History screen. The three tips are consumable, optional, and unlock nothing. "Restore purchases" and "Redeem code" are on the same screen; "Redeem code" opens Apple's own offer code sheet.
 
 ## Screenshots
 
 Captured in `AppStore/screenshots/`:
 
-- `iphone-6.9/` at 1290 × 2796, for the 6.9-inch iPhone slot
+- `iphone-6.1/` at 1179 × 2556, for the "iPhone with Dynamic Island (medium display)" slot, which is the one App Store Connect shows by default
+- `iphone-6.9/` at 1290 × 2796, for the larger 6.9-inch iPhone slot, if you add it under "View All Sizes in Media Manager"
 - `ipad-13/` at 2064 × 2752, for the 13-inch iPad slot
 
 Suggested order: table, joker placement, practice round, how to play, history, menu.

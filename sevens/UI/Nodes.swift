@@ -151,6 +151,7 @@ final class ButtonNode: SKNode {
         fontSize: CGFloat,
         fill: SKColor = Style.gold,
         textColor: SKColor = Style.ink,
+        outlined: Bool = true,
         action: @escaping () -> Void
     ) {
         self.action = action
@@ -158,7 +159,7 @@ final class ButtonNode: SKNode {
 
         let shape = SKShapeNode(rectOf: size, cornerRadius: min(size.height / 2, 12))
         shape.fillColor = fill
-        shape.strokeColor = SKColor(white: 1, alpha: 0.35)
+        shape.strokeColor = outlined ? SKColor(white: 1, alpha: 0.35) : .clear
         shape.lineWidth = 1
         addChild(shape)
 

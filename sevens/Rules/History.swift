@@ -18,9 +18,35 @@ nonisolated struct GameRecord: Codable, Equatable, Sendable {
     var rounds: Int
     /// Rounds in which the player went out first.
     var roundsWon: Int
+    /// True if the player quit before the game ended. A quit game counts as a
+    /// last-place finish, whatever the scores were at the time.
+    var quit: Bool
+
+    init(date: Date, target: Int, jokers: Int, scores: [Int], rounds: Int, roundsWon: Int, quit: Bool = false) {
+        self.date = date
+        self.target = target
+        self.jokers = jokers
+        self.scores = scores
+        self.rounds = rounds
+        self.roundsWon = roundsWon
+        self.quit = quit
+    }
+
+    /// Histories saved before quitting existed have no `quit` value.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decode(Date.self, forKey: .date)
+        target = try container.decode(Int.self, forKey: .target)
+        jokers = try container.decode(Int.self, forKey: .jokers)
+        scores = try container.decode([Int].self, forKey: .scores)
+        rounds = try container.decode(Int.self, forKey: .rounds)
+        roundsWon = try container.decode(Int.self, forKey: .roundsWon)
+        quit = try container.decodeIfPresent(Bool.self, forKey: .quit) ?? false
+    }
 
     /// 1 for the lowest score, up to the number of players. Ties share the better place.
     var place: Int {
+        if quit { return max(scores.count, 1) }
         guard let mine = scores.first else { return 1 }
         return 1 + scores.dropFirst().filter { $0 < mine }.count
     }
