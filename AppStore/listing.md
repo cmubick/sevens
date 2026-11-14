@@ -5,11 +5,8 @@ Items marked **TODO** need a decision or a detail from you.
 
 ## Name and subtitle
 
-- **App name** (30 max): **TODO**. Plain "Sevens" is very likely taken. Options:
-  - `Sevens: Spades Rule` [19]
-  - `Sevens - Spade Rules Card Game` [30]
-  - `Spade Sevens` [12]
-- **Subtitle** (30 max): `Classic cards, spades rule` [26]
+- **App name** (30 max): `Sevens Card Game: Spades Rule` [29] (accepted by App Store Connect)
+- **Subtitle** (30 max): `Classic house rules, no ads` [27]
 - **Name under the icon:** Sevens (already set in the project)
 
 ## Promotional text (170 max)
@@ -67,7 +64,9 @@ Notes:
 
 ## Keywords (100 max, comma separated, no spaces)
 
-`sevens,fan tan,parliament,card,cards,spades,jokers,solitaire,offline,classic,family,bots,domino` [95]
+`fan tan,parliament,dominoes,jokers,solo,offline,classic,family,bots,playing,deck,7s,seven,sevens up` [99]
+
+Words already in the app name (sevens, card, game, spades, rule) are left out on purpose: Apple searches the name too, so repeating them wastes space.
 
 ## What's New (version 1.0)
 
@@ -81,8 +80,8 @@ Notes:
 
 ## URLs
 
-- **Support URL:** **TODO** the published address of `docs/index.html`
-- **Privacy Policy URL:** **TODO** the published address of `docs/privacy.html`
+- **Support URL:** `https://cmubick.github.io/sevens/` (once GitHub Pages is turned on)
+- **Privacy Policy URL:** `https://cmubick.github.io/sevens/privacy.html`
 - **Marketing URL:** optional, can be left blank
 
 ## Copyright
@@ -125,10 +124,3 @@ Captured in `AppStore/screenshots/`:
 - `ipad-13/` at 2064 × 2752, for the 13-inch iPad slot
 
 Suggested order: table, joker placement, practice round, how to play, history, menu.
-
-## Still to decide
-
-- **App name** from the options above, or your own.
-- **Bundle ID.** The project still uses `app.sevens`. Pick one you own, for example `com.ubick.sevens`, and it needs changing in the project before the first upload.
-- **Support email** for the support page.
-- **Where to publish** the two pages in `docs/`.
