@@ -9,6 +9,7 @@
 //
 
 import SpriteKit
+import StoreKit
 
 final class GameScene: SKScene {
 
@@ -25,6 +26,7 @@ final class GameScene: SKScene {
         case menu
         case help(page: Int)
         case history
+        case store
         case summary(points: [Int], winner: Int)
         case jokerWarning(Round.Move, Face)
     }
@@ -38,6 +40,10 @@ final class GameScene: SKScene {
     /// Set while the scripted practice round is running.
     private var practice: Practice?
     private var history = GameHistory()
+    private let store = Store()
+    /// The line of feedback shown on the store screen after a purchase or restore.
+    private var storeMessage = ""
+    private var isBuying = false
     /// Rounds the player has gone out first in during the current game.
     private var roundsWon = 0
     /// False for debug scenarios, so test positions never land in the history.
@@ -187,6 +193,14 @@ final class GameScene: SKScene {
         addChild(overlayLayer)
         isSetUp = true
         history = HistoryStore.load()
+        #if DEBUG
+        if let index = CommandLine.arguments.firstIndex(of: "-unlocked"),
+           CommandLine.arguments.indices.contains(index + 1) {
+            store.debugOverride = CommandLine.arguments[index + 1] == "YES"
+        }
+        #endif
+        store.onChange = { [weak self] in self?.rebuildOverlay() }
+        store.start()
         // First launch opens on the instructions.
         if !UserDefaults.standard.bool(forKey: HelpPage.seenKey) {
             overlay = .help(page: 0)
@@ -222,6 +236,12 @@ final class GameScene: SKScene {
             }
             history = sample
             overlay = .history
+            rebuildOverlay()
+            return
+        }
+        if name == "store" {
+            UserDefaults.standard.set(true, forKey: HelpPage.seenKey)
+            overlay = .store
             rebuildOverlay()
             return
         }
@@ -392,10 +412,68 @@ final class GameScene: SKScene {
 
     private func startMatch() {
         generation += 1
+        limitSettingsToWhatIsOwned()
         match = Match(settings: settings)
         roundsWon = 0
         recordsHistory = true
         startRound()
+    }
+
+    /// Without the full game, only Short and Standard games with no jokers are available.
+    private func limitSettingsToWhatIsOwned() {
+        guard !store.isUnlocked else { return }
+        if isLocked(settings.length) { settings.length = .standard }
+        settings.jokers = 0
+    }
+
+    private func isLocked(_ length: GameLength) -> Bool {
+        !store.isUnlocked && length.targetScore > GameLength.standard.targetScore
+    }
+
+    private func openStore() {
+        storeMessage = ""
+        overlay = .store
+        rebuildOverlay()
+    }
+
+    private func purchase(_ product: Product) {
+        guard !isBuying else { return }
+        isBuying = true
+        storeMessage = "Contacting the App Store…"
+        rebuildOverlay()
+        Task { [weak self] in
+            guard let self else { return }
+            let outcome = await self.store.buy(product)
+            self.isBuying = false
+            switch outcome {
+            case .success:
+                Haptics.victory(game: false)
+                self.storeMessage = product.id == Store.fullGameID
+                    ? "Unlocked. Enjoy the full game!"
+                    : "Thank you! Your dealer appreciates it."
+            case .pending:
+                self.storeMessage = "Waiting for approval."
+            case .cancelled:
+                self.storeMessage = ""
+            case .failed:
+                self.storeMessage = "The purchase didn't go through."
+            }
+            self.rebuildOverlay()
+        }
+    }
+
+    private func restorePurchases() {
+        guard !isBuying else { return }
+        isBuying = true
+        storeMessage = "Checking your purchases…"
+        rebuildOverlay()
+        Task { [weak self] in
+            guard let self else { return }
+            let found = await self.store.restore()
+            self.isBuying = false
+            self.storeMessage = found ? "Full game restored." : "No earlier purchase found."
+            self.rebuildOverlay()
+        }
     }
 
     private func startRound() {
@@ -989,6 +1067,7 @@ final class GameScene: SKScene {
         switch overlay {
         case .menu: height = 530 * m.u
         case .history: height = 470 * m.u
+        case .store: height = 500 * m.u
         case .help: height = 470 * m.u
         case .summary: height = 350 * m.u
         case .jokerWarning: height = 250 * m.u
@@ -1006,6 +1085,8 @@ final class GameScene: SKScene {
             buildMenu(in: panel, width: width, m: m)
         case .history:
             buildHistory(in: panel, width: width, m: m)
+        case .store:
+            buildStore(in: panel, width: width, m: m)
         case .help(let page):
             buildHelp(in: panel, width: width, page: page, m: m)
         case .summary(let points, let winner):
@@ -1034,20 +1115,27 @@ final class GameScene: SKScene {
 
     private func buildMenu(in panel: SKNode, width: CGFloat, m: Metrics) {
         let u = m.u
+        limitSettingsToWhatIsOwned()
+        let lock = " \u{1F512}"
         add(Style.label("Sevens", size: 44 * u, font: Style.bold, color: Style.gold), to: panel, y: 215 * u)
         add(Style.label("Spades rule the table", size: 15 * u, color: SKColor(white: 1, alpha: 0.8)), to: panel, y: 179 * u)
 
         add(Style.label("Game length", size: 14 * u, font: Style.bold), to: panel, y: 139 * u)
         let half = CGSize(width: (width - 52 * u) / 2, height: 40 * u)
         for (index, length) in GameLength.allCases.enumerated() {
+            let locked = isLocked(length)
             let button = choiceButton(
-                "\(length.title) · \(length.targetScore)",
+                "\(length.title) · \(length.targetScore)" + (locked ? lock : ""),
                 size: half,
                 selected: settings.length == length,
                 m: m
             ) { [weak self] in
-                self?.settings.length = length
-                self?.rebuildOverlay()
+                if locked {
+                    self?.openStore()
+                } else {
+                    self?.settings.length = length
+                    self?.rebuildOverlay()
+                }
             }
             let column: CGFloat = index % 2 == 0 ? -1 : 1
             add(button, to: panel,
@@ -1058,14 +1146,19 @@ final class GameScene: SKScene {
         add(Style.label("Jokers", size: 14 * u, font: Style.bold), to: panel, y: 9 * u)
         let third = CGSize(width: (width - 64 * u) / 3, height: 40 * u)
         for count in 0...2 {
+            let locked = !store.isUnlocked && count > 0
             let button = choiceButton(
-                count == 0 ? "None" : "\(count)",
+                (count == 0 ? "None" : "\(count)") + (locked ? lock : ""),
                 size: third,
                 selected: settings.jokers == count,
                 m: m
             ) { [weak self] in
-                self?.settings.jokers = count
-                self?.rebuildOverlay()
+                if locked {
+                    self?.openStore()
+                } else {
+                    self?.settings.jokers = count
+                    self?.rebuildOverlay()
+                }
             }
             add(button, to: panel, x: CGFloat(count - 1) * (third.width + 12 * u), y: -29 * u)
         }
@@ -1099,17 +1192,124 @@ final class GameScene: SKScene {
         ) { [weak self] in self?.startPractice() }
         add(practiceButton, to: panel, x: small.width / 2 + 6 * u, y: -163 * u)
 
+        let unlocked = store.isUnlocked
         let historyButton = ButtonNode(
-            text: "History",
-            size: CGSize(width: width - 40 * u, height: 44 * u),
+            text: "History" + (unlocked ? "" : lock),
+            size: small,
             fontSize: 16 * u,
             fill: SKColor(white: 1, alpha: 0.12),
             textColor: .white
         ) { [weak self] in
-            self?.overlay = .history
+            if unlocked {
+                self?.overlay = .history
+                self?.rebuildOverlay()
+            } else {
+                self?.openStore()
+            }
+        }
+        add(historyButton, to: panel, x: -(small.width / 2 + 6 * u), y: -217 * u)
+
+        let storeButton = ButtonNode(
+            text: unlocked ? "Tip your dealer" : "Unlock full game",
+            size: small,
+            fontSize: 15 * u,
+            fill: SKColor(white: 1, alpha: 0.12),
+            textColor: Style.gold
+        ) { [weak self] in self?.openStore() }
+        add(storeButton, to: panel, x: small.width / 2 + 6 * u, y: -217 * u)
+    }
+
+    private func buildStore(in panel: SKNode, width: CGFloat, m: Metrics) {
+        let u = m.u
+        let faint = SKColor(white: 1, alpha: 0.7)
+        let unlocked = store.isUnlocked
+        add(Style.label(unlocked ? "Tip your dealer" : "Sevens: Full Game",
+                        size: 24 * u, font: Style.bold, color: Style.gold), to: panel, y: 218 * u)
+
+        if unlocked {
+            let thanks = Style.label("You own the full game.\nThank you for supporting Sevens!", size: 15 * u)
+            thanks.numberOfLines = 0
+            thanks.preferredMaxLayoutWidth = width - 48 * u
+            add(thanks, to: panel, y: 130 * u)
+        } else {
+            let features = [
+                "Jokers: play with one or two",
+                "Long and Epic games, to 200 and 500",
+                "Game history and your trend",
+            ]
+            for (index, feature) in features.enumerated() {
+                add(Style.label("•  " + feature, size: 15 * u), to: panel, y: (182 - CGFloat(index) * 24) * u)
+            }
+            add(Style.label("One purchase. Yours to keep. No ads, ever.", size: 12.5 * u, color: faint),
+                to: panel, y: 106 * u)
+
+            let wide = CGSize(width: width - 40 * u, height: 48 * u)
+            if let product = store.fullGame {
+                let buy = ButtonNode(text: "Unlock for \(product.displayPrice)", size: wide, fontSize: 19 * u) {
+                    [weak self] in self?.purchase(product)
+                }
+                add(buy, to: panel, y: 66 * u)
+            } else {
+                let waiting = ButtonNode(
+                    text: store.hasLoaded ? "Store unavailable" : "Loading…",
+                    size: wide,
+                    fontSize: 17 * u,
+                    fill: SKColor(white: 1, alpha: 0.12),
+                    textColor: faint
+                ) {}
+                add(waiting, to: panel, y: 66 * u)
+            }
+            let restore = ButtonNode(
+                text: "Restore purchases",
+                size: CGSize(width: 170 * u, height: 28 * u),
+                fontSize: 13 * u,
+                fill: SKColor(white: 1, alpha: 0.12),
+                textColor: .white
+            ) { [weak self] in self?.restorePurchases() }
+            add(restore, to: panel, y: 22 * u)
+        }
+
+        // Tips are always optional and never unlock anything.
+        if !unlocked {
+            add(Style.label("Tip your dealer", size: 16 * u, font: Style.bold), to: panel, y: -20 * u)
+        }
+        add(Style.label("Tips are optional and don't unlock anything extra.", size: 12.5 * u, color: faint),
+            to: panel, y: (unlocked ? 70 : -42) * u)
+        let tipY: CGFloat = (unlocked ? 20 : -84) * u
+        if store.tips.isEmpty {
+            add(Style.label(store.hasLoaded ? "Tips are unavailable right now." : "Loading…",
+                            size: 14 * u, color: faint), to: panel, y: tipY)
+        } else {
+            let count = CGFloat(store.tips.count)
+            let size = CGSize(width: (width - 40 * u - (count - 1) * 10 * u) / count, height: 44 * u)
+            for (index, tip) in store.tips.enumerated() {
+                let x = (CGFloat(index) - (count - 1) / 2) * (size.width + 10 * u)
+                let button = ButtonNode(
+                    text: tip.displayPrice,
+                    size: size,
+                    fontSize: 17 * u,
+                    fill: SKColor(white: 1, alpha: 0.12),
+                    textColor: .white
+                ) { [weak self] in self?.purchase(tip) }
+                add(button, to: panel, x: x, y: tipY)
+                add(Style.label(tip.displayName, size: 12 * u, color: faint), to: panel, x: x, y: tipY - 34 * u)
+            }
+        }
+
+        add(Style.label(storeMessage, size: 14 * u, font: Style.bold, color: Style.gold),
+            to: panel, y: (unlocked ? -70 : -150) * u)
+
+        let close = ButtonNode(
+            text: "Close",
+            size: CGSize(width: width - 40 * u, height: 46 * u),
+            fontSize: 18 * u,
+            fill: SKColor(white: 1, alpha: 0.12),
+            textColor: .white
+        ) { [weak self] in
+            self?.overlay = .menu
             self?.rebuildOverlay()
         }
-        add(historyButton, to: panel, y: -217 * u)
+        add(close, to: panel, y: -207 * u)
     }
 
     private func buildHistory(in panel: SKNode, width: CGFloat, m: Metrics) {

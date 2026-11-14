@@ -14,7 +14,7 @@ Items marked **TODO** need a decision or a detail from you.
 
 ## Promotional text (170 max)
 
-> The classic card game Sevens, played the spade-ruled way: no card goes down until its spade does. Three computer opponents, optional jokers, and no ads. [152]
+> The classic card game Sevens, played the spade-ruled way: no card goes down until its spade does. Free to play against three computer opponents, with no ads. [157]
 
 ## Description
 
@@ -32,14 +32,38 @@ Items marked **TODO** need a decision or a detail from you.
 > OPTIONAL JOKERS
 > Add one or two jokers. A joker stands in for any playable card, and the real card it replaced becomes dead: unplayable and worth 30 points to whoever is stuck holding it. Pass it on while you can.
 >
-> FEATURES
-> • Four game lengths: Short (50), Standard (100), Long (200) and Epic (500)
+> FREE TO PLAY
+> • Short (50) and Standard (100) games against three computer opponents
 > • How to play pages and a guided practice round for new players
-> • Game history that shows whether you are trending better over your last 10 games
 > • Haptic feedback on iPhone
 > • iPhone and iPad, with a wide table layout for iPad in landscape
 > • Plays entirely offline
 > • No ads, no accounts, no data collected
+>
+> THE FULL GAME (one-time purchase)
+> • Jokers: play with one or two
+> • Long (200) and Epic (500) games
+> • Game history that shows whether you are trending better over your last 10 games
+>
+> You can also tip your dealer. Tips are optional and unlock nothing extra.
+
+## In-app purchases
+
+Create these in App Store Connect with exactly these product IDs; the app looks them up by ID. Prices are suggestions.
+
+| Product ID | Type | Reference name | Price | Display name | Description |
+|---|---|---|---|---|---|
+| `sevens.fullgame` | Non-consumable | Full Game | $2.99 | Full Game | Jokers, Long and Epic games, and your game history. |
+| `sevens.tip.small` | Consumable | Small tip | $0.99 | Small tip | A small thank-you to the dealer. |
+| `sevens.tip.medium` | Consumable | Generous tip | $2.99 | Generous tip | A generous thank-you to the dealer. |
+| `sevens.tip.large` | Consumable | Big tip | $4.99 | Big tip | A very generous thank-you to the dealer. |
+
+Notes:
+
+- Selling anything needs the Paid Apps agreement, with banking and tax details, in App Store Connect.
+- Each purchase needs a review screenshot; the store screen in the app works for all four.
+- Turn on Family Sharing for the Full Game if you want one purchase to cover a family.
+- The app already has the required "Restore purchases" button on its store screen.
 
 ## Keywords (100 max, comma separated, no spaces)
 
@@ -89,7 +113,9 @@ The project already declares that the app uses no non-exempt encryption, so App 
 
 > Sevens is a single-player card game against three computer opponents. It needs no account and no network connection.
 >
-> To see every feature quickly: on the start menu, tap "Practice round" for a short guided hand, "How to play" for the rules, and "History" for the statistics screen (empty until a game has been finished). To play a full game, choose "Short · 50" and tap "Deal".
+> To see the free features quickly: on the start menu, tap "Practice round" for a short guided hand and "How to play" for the rules. To play a full game, choose "Short · 50" and tap "Deal".
+>
+> In-app purchases are on the store screen, opened with "Unlock full game" on the start menu or by tapping any option marked with a lock. The Full Game purchase unlocks jokers, the Long and Epic game lengths, and the History screen. The three tips are consumable, optional, and unlock nothing. "Restore purchases" is on the same screen.
 
 ## Screenshots
 

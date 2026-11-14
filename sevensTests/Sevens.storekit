@@ -1,0 +1,78 @@
+{
+  "identifier" : "5E7E1157",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : true,
+      "internalID" : "7000000001",
+      "localizations" : [
+        {
+          "description" : "Jokers, Long and Epic games, and your game history.",
+          "displayName" : "Full Game",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "sevens.fullgame",
+      "referenceName" : "Full Game",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "7000000002",
+      "localizations" : [
+        {
+          "description" : "A small thank-you to the dealer.",
+          "displayName" : "Small tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "sevens.tip.small",
+      "referenceName" : "Small tip",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : false,
+      "internalID" : "7000000003",
+      "localizations" : [
+        {
+          "description" : "A generous thank-you to the dealer.",
+          "displayName" : "Generous tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "sevens.tip.medium",
+      "referenceName" : "Generous tip",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "7000000004",
+      "localizations" : [
+        {
+          "description" : "A very generous thank-you to the dealer.",
+          "displayName" : "Big tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "sevens.tip.large",
+      "referenceName" : "Big tip",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

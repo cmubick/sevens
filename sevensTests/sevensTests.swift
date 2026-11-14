@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import StoreKit
+import StoreKitTest
 import Testing
 @testable import sevens
 
@@ -489,5 +491,73 @@ struct HistoryTests {
         var history = GameHistory()
         for _ in 0..<(GameHistory.limit + 5) { history.add(game(10)) }
         #expect(history.games.count == GameHistory.limit)
+    }
+}
+
+/// Runs the store against the local test configuration in Sevens.storekit.
+@MainActor
+@Suite(.serialized)
+struct StoreTests {
+
+    private func makeSession() throws -> SKTestSession {
+        let session = try SKTestSession(configurationFileNamed: "Sevens")
+        session.disableDialogs = true
+        session.clearTransactions()
+        return session
+    }
+
+    private func makeStore() -> Store {
+        let name = "store-tests-\(UUID().uuidString)"
+        return Store(defaults: UserDefaults(suiteName: name)!)
+    }
+
+    @Test func loadsTheUnlockAndThreeTips() async throws {
+        _ = try makeSession()
+        let store = makeStore()
+        await store.refresh()
+        #expect(store.hasLoaded)
+        #expect(store.fullGame?.id == Store.fullGameID)
+        #expect(store.tips.map(\.id) == Store.tipIDs)
+        #expect(!store.isUnlocked)
+    }
+
+    @Test func buyingTheFullGameUnlocksItAndIsRemembered() async throws {
+        _ = try makeSession()
+        let defaults = UserDefaults(suiteName: "store-tests-\(UUID().uuidString)")!
+        let store = Store(defaults: defaults)
+        await store.refresh()
+        let product = try #require(store.fullGame)
+        #expect(await store.buy(product) == .success)
+        #expect(store.isUnlocked)
+
+        // A fresh launch reads the cached answer, then the store confirms it.
+        let relaunched = Store(defaults: defaults)
+        #expect(relaunched.isUnlocked)
+        await relaunched.refresh()
+        #expect(relaunched.isUnlocked)
+    }
+
+    @Test func tippingDoesNotUnlockAnything() async throws {
+        _ = try makeSession()
+        let store = makeStore()
+        await store.refresh()
+        let tip = try #require(store.tips.first)
+        #expect(await store.buy(tip) == .success)
+        #expect(!store.isUnlocked)
+        // Tips can be given more than once.
+        #expect(await store.buy(tip) == .success)
+    }
+
+    @Test func restoreFindsAnEarlierPurchase() async throws {
+        _ = try makeSession()
+        // Bought on one "device"...
+        let first = makeStore()
+        await first.refresh()
+        #expect(await first.buy(try #require(first.fullGame)) == .success)
+        // ...then restored on another that has no cached answer.
+        let store = makeStore()
+        #expect(!store.isUnlocked)
+        #expect(await store.restore())
+        #expect(store.isUnlocked)
     }
 }
