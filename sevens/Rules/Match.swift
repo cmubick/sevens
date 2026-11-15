@@ -9,7 +9,7 @@
 
 import Foundation
 
-nonisolated enum GameLength: Int, CaseIterable, Sendable {
+nonisolated enum GameLength: Int, CaseIterable, Sendable, Codable {
     case short = 50
     case standard = 100
     case long = 200
@@ -27,14 +27,14 @@ nonisolated enum GameLength: Int, CaseIterable, Sendable {
     }
 }
 
-nonisolated struct MatchSettings: Sendable {
+nonisolated struct MatchSettings: Sendable, Codable {
     var playerCount = 4
     var length: GameLength = .standard
     /// 0, 1 or 2.
     var jokers = 0
 }
 
-nonisolated struct Match: Sendable {
+nonisolated struct Match: Sendable, Codable {
     let settings: MatchSettings
     private(set) var scores: [Int]
     private(set) var dealer = 0

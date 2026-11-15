@@ -585,3 +585,85 @@ struct StoreTests {
         #expect(store.isUnlocked)
     }
 }
+
+struct SavedGameTests {
+
+    /// Plays a seeded bot game for a while so there is a realistic position to save.
+    private func midGame(jokers: Int = 2, moves: Int = 25) throws -> (Match, Round) {
+        var generator = SeededGenerator(seed: 42)
+        let match = Match(settings: MatchSettings(length: .long, jokers: jokers))
+        var round = match.dealRound(using: &generator)
+        for _ in 0..<moves {
+            guard round.winner == nil else { break }
+            try round.apply(try #require(Bot.chooseMove(in: round)))
+        }
+        return (match, round)
+    }
+
+    @Test func aGameInProgressSurvivesSavingAndLoading() throws {
+        let (match, round) = try midGame()
+        let saved = SavedGame(match: match, round: round, roundsWon: 1)
+        let data = try JSONEncoder().encode(saved)
+        let loaded = try JSONDecoder().decode(SavedGame.self, from: data)
+        let restored = try #require(loaded.round)
+
+        #expect(restored.hands == round.hands)
+        #expect(restored.turn == round.turn)
+        #expect(restored.phase == round.phase)
+        #expect(restored.dead == round.dead)
+        #expect(restored.table.runs == round.table.runs)
+        #expect(restored.table.jokers == round.table.jokers)
+        #expect(Set(restored.legalMoves()) == Set(round.legalMoves()))
+        #expect(loaded.match.scores == match.scores)
+        #expect(loaded.match.settings.length == .long)
+        #expect(loaded.match.settings.jokers == 2)
+        #expect(loaded.roundsWon == 1)
+    }
+
+    @Test func aRestoredGameCanBePlayedToTheEnd() throws {
+        let (_, round) = try midGame()
+        let data = try JSONEncoder().encode(round)
+        var restored = try JSONDecoder().decode(Round.self, from: data)
+        var steps = 0
+        while restored.winner == nil {
+            try restored.apply(try #require(Bot.chooseMove(in: restored)))
+            steps += 1
+            try #require(steps < 2000)
+        }
+        #expect(restored.winner != nil)
+    }
+
+    @Test func savingBetweenRoundsKeepsNoRound() throws {
+        let (match, _) = try midGame()
+        let data = try JSONEncoder().encode(SavedGame(match: match, round: nil, roundsWon: 0))
+        #expect(try JSONDecoder().decode(SavedGame.self, from: data).round == nil)
+    }
+
+    @Test func saverWritesLoadsAndClearsAFile() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sevens-tests-\(UUID().uuidString)")
+            .appendingPathComponent("savedGame.json")
+        #expect(GameSaver.load(from: url) == nil)
+        let (match, round) = try midGame()
+        GameSaver.save(SavedGame(match: match, round: round, roundsWon: 2), to: url)
+        #expect(GameSaver.load(from: url)?.roundsWon == 2)
+        GameSaver.clear(at: url)
+        #expect(GameSaver.load(from: url) == nil)
+    }
+}
+
+struct SoundTests {
+
+    @Test(arguments: Sound.allCases)
+    func everySoundIsAValidShortWavFile(sound: Sound) {
+        let data = SoundSynth.wav(for: sound)
+        #expect(String(decoding: data.prefix(4), as: UTF8.self) == "RIFF")
+        #expect(String(decoding: data[8..<12], as: UTF8.self) == "WAVE")
+        let samples = SoundSynth.samples(for: sound)
+        #expect(data.count == 44 + samples.count * 2)
+        // Audible, never clipping, and short enough to stay out of the way.
+        #expect(samples.contains { abs($0) > 0.05 })
+        #expect(samples.allSatisfy { abs($0) <= 1 })
+        #expect(Double(samples.count) / SoundSynth.sampleRate < 1.5)
+    }
+}

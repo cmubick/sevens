@@ -7,7 +7,7 @@
 
 import Foundation
 
-nonisolated enum Suit: Int, CaseIterable, Hashable, Sendable {
+nonisolated enum Suit: Int, CaseIterable, Hashable, Sendable, Codable {
     case spades, hearts, diamonds, clubs
 
     var symbol: String {
@@ -21,7 +21,7 @@ nonisolated enum Suit: Int, CaseIterable, Hashable, Sendable {
 }
 
 /// One of the 52 ordinary cards. Rank runs 1 (ace, low) through 13 (king).
-nonisolated struct Face: Hashable, Sendable, CustomStringConvertible {
+nonisolated struct Face: Hashable, Sendable, Codable, CustomStringConvertible {
     static let ranks = 1...13
     static let startRank = 7
 
@@ -50,7 +50,7 @@ nonisolated struct Face: Hashable, Sendable, CustomStringConvertible {
 }
 
 /// A physical card: an ordinary card or one of the jokers.
-nonisolated enum Card: Hashable, Sendable, CustomStringConvertible {
+nonisolated enum Card: Hashable, Sendable, Codable, CustomStringConvertible {
     case face(Face)
     case joker(Int)
 
@@ -83,7 +83,7 @@ nonisolated enum Card: Hashable, Sendable, CustomStringConvertible {
 }
 
 /// The cards laid out on the table: one run per suit, growing outward from the 7.
-nonisolated struct Table: Sendable {
+nonisolated struct Table: Sendable, Codable {
     /// The span of ranks on the table for each suit that has been started.
     private(set) var runs: [Suit: ClosedRange<Int>] = [:]
     /// Positions that are filled by a joker instead of the real card.

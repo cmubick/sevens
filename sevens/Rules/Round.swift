@@ -11,9 +11,9 @@ nonisolated enum RuleError: Error, Equatable {
     case illegalMove
 }
 
-nonisolated struct Round: Sendable {
+nonisolated struct Round: Sendable, Codable {
 
-    enum Phase: Equatable, Sendable {
+    enum Phase: Equatable, Sendable, Codable {
         /// `turn` must play a card, or ask for one if nothing is playable.
         case play
         /// `from` must hand one card of their choice to `to`.

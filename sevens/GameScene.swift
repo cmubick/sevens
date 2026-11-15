@@ -29,7 +29,9 @@ final class GameScene: SKScene {
         case store
         case summary(points: [Int], winner: Int)
         case jokerWarning(Round.Move, Face)
+        case gameMenu
         case quitConfirm
+        case newGameConfirm
     }
 
     private var settings = MatchSettings()
@@ -41,6 +43,10 @@ final class GameScene: SKScene {
     /// Set while the scripted practice round is running.
     private var practice: Practice?
     private var history = GameHistory()
+    /// The unfinished game on disk, if there is one. Offered as "Resume game" on the menu.
+    private var savedGame: SavedGame?
+    /// True while the cards are flying out at the start of a round.
+    private var isDealing = false
     private let store = Store()
     /// The line of feedback shown on the store screen after a purchase or restore.
     private var storeMessage = ""
@@ -63,6 +69,7 @@ final class GameScene: SKScene {
     private let targetLayer = SKNode()
     private let hudLayer = SKNode()
     private let coachLayer = SKNode()
+    private let dealLayer = SKNode()
     private let overlayLayer = SKNode()
     private var badges: [Int: BadgeNode] = [:]
     private var eventLabel = SKLabelNode()
@@ -101,12 +108,13 @@ final class GameScene: SKScene {
                 : min(size.width / 390, size.height / 780)
             self.u = u
 
-            handScale = u
+            // Upright, the hand is two rows; smaller cards leave room to show most of the top row.
+            handScale = isLandscape ? u : 0.92 * u
             handPerRow = isLandscape ? 14 : 7
-            let handCardHeight = CardNode.size.height * u
+            let handCardHeight = CardNode.size.height * handScale
             handBottomRowY = insets.bottom + 10 * u + handCardHeight / 2
-            handRowStep = handCardHeight * 0.6
-            let handTop = insets.bottom + 10 * u + handCardHeight * (isLandscape ? 1.0 : 1.6) + 12 * u
+            handRowStep = handCardHeight * 0.82
+            let handTop = insets.bottom + 10 * u + handCardHeight * (isLandscape ? 1.0 : 1.82) + 12 * u
             infoY = handTop + 12 * u
             promptY = handTop + 38 * u
             eventY = handTop + 64 * u
@@ -189,14 +197,18 @@ final class GameScene: SKScene {
         targetLayer.zPosition = 80
         hudLayer.zPosition = 5
         coachLayer.zPosition = 90
+        dealLayer.zPosition = 150
         overlayLayer.zPosition = 1000
         addChild(slotLayer)
         addChild(targetLayer)
         addChild(hudLayer)
         addChild(coachLayer)
+        addChild(dealLayer)
         addChild(overlayLayer)
         isSetUp = true
         history = HistoryStore.load()
+        savedGame = GameSaver.load()
+        _ = Sounds.shared
         #if DEBUG
         if let index = CommandLine.arguments.firstIndex(of: "-unlocked"),
            CommandLine.arguments.indices.contains(index + 1) {
@@ -514,7 +526,145 @@ final class GameScene: SKScene {
             ? "You hold the 7\(Suit.spades.glyph) and start"
             : "\(names[dealt.turn]) holds the 7\(Suit.spades.glyph) and starts"
         rebuildOverlay()
+        saveProgress()
+        runDeal()
+    }
+
+    // MARK: - Dealing
+
+    /// Flies the cards out from the middle of the table, then starts play. A tap skips it.
+    private func runDeal() {
+        sync(animated: false)
+        refreshHUD()
+        guard let round else { return }
+        isDealing = true
+        let m = metrics
+        let deck = CGPoint(x: size.width / 2, y: m.tableMidY)
+
+        // The player's cards fan out into the hand, one after another.
+        for (index, card) in sortedHand(round.hands[0]).enumerated() {
+            guard let node = cardNodes[card] else { continue }
+            let target = node.position
+            let scale = node.xScale
+            node.position = deck
+            node.setScale(scale * 0.6)
+            node.alpha = 0
+            let fly = SKAction.group([
+                .fadeIn(withDuration: 0.08),
+                .move(to: target, duration: 0.28),
+                .scale(to: scale, duration: 0.28),
+            ])
+            fly.timingMode = .easeOut
+            node.run(.sequence([.wait(forDuration: Double(index) * 0.035), fly]), withKey: "move")
+        }
+
+        // A few face-down cards fly to each opponent.
+        let backSize = m.tableCardSize
+        for player in 1..<round.playerCount {
+            for copy in 0..<4 {
+                let back = SKShapeNode(rectOf: backSize, cornerRadius: 7 * m.tableScale)
+                back.fillColor = SKColor(red: 0.50, green: 0.09, blue: 0.11, alpha: 1)
+                back.strokeColor = Style.cardFace
+                back.lineWidth = 2
+                back.position = deck
+                back.alpha = 0
+                dealLayer.addChild(back)
+                back.run(.sequence([
+                    .wait(forDuration: Double(copy) * 0.11 + Double(player) * 0.03),
+                    .fadeIn(withDuration: 0.04),
+                    .group([.move(to: m.badge(player), duration: 0.26), .scale(to: 0.5, duration: 0.26)]),
+                    .fadeOut(withDuration: 0.08),
+                    .removeFromParent(),
+                ]))
+            }
+        }
+        dealLayer.run(.repeat(.sequence([
+            .run { Sounds.shared.play(.deal) },
+            .wait(forDuration: 0.11),
+        ]), count: 5), withKey: "sound")
+
+        after(1.0) { [weak self] in self?.finishDeal() }
+    }
+
+    private func finishDeal() {
+        guard isDealing else { return }
+        isDealing = false
+        dealLayer.removeAllChildren()
         advance()
+    }
+
+    /// Ends the deal animation at once and puts every card where it belongs.
+    private func stopDealAnimation() {
+        guard isDealing else { return }
+        isDealing = false
+        dealLayer.removeAllActions()
+        dealLayer.removeAllChildren()
+        cardNodes.values.forEach { $0.removeAllActions() }
+        sync(animated: false)
+    }
+
+    // MARK: - Saving and resuming
+
+    /// Writes the game in progress to disk. Practice rounds and test positions are never saved.
+    /// Pass `roundRecorded` once a finished round has been added to the scores, so
+    /// resuming deals the next round instead of scoring the same one twice.
+    private func saveProgress(roundRecorded: Bool = false) {
+        guard practice == nil, recordsHistory else { return }
+        let game = SavedGame(match: match, round: roundRecorded ? nil : round, roundsWon: roundsWon)
+        savedGame = game
+        GameSaver.save(game)
+    }
+
+    private func clearSavedGame() {
+        savedGame = nil
+        GameSaver.clear()
+    }
+
+    private func resumeGame() {
+        guard let saved = savedGame else { return }
+        generation += 1
+        practice = nil
+        recordsHistory = true
+        match = saved.match
+        settings = saved.match.settings
+        roundsWon = saved.roundsWon
+        cardNodes.values.forEach { $0.removeFromParent() }
+        cardNodes = [:]
+        selectedJoker = nil
+        overlay = nil
+        if let saved = saved.round {
+            round = saved
+            eventText = "Game resumed"
+            rebuildOverlay()
+            advance()
+        } else {
+            // Saved between rounds: deal the next one.
+            startRound()
+        }
+    }
+
+    /// Adds an abandoned game to the history as a quit, if it got as far as finishing a round.
+    private func recordQuit(of match: Match, roundsWon: Int) {
+        guard match.roundsPlayed >= 1 else { return }
+        history.add(GameRecord(
+            date: Date(),
+            target: match.settings.length.targetScore,
+            jokers: match.settings.jokers,
+            scores: match.scores,
+            rounds: match.roundsPlayed,
+            roundsWon: roundsWon,
+            quit: true
+        ))
+        HistoryStore.save(history)
+    }
+
+    /// Starting a new game over a saved one counts the saved one as quit.
+    private func replaceSavedGameWithNew() {
+        if let saved = savedGame {
+            recordQuit(of: saved.match, roundsWon: saved.roundsWon)
+        }
+        clearSavedGame()
+        startMatch()
     }
 
     /// Redraws, then lets a bot move or waits for the player.
@@ -572,11 +722,12 @@ final class GameScene: SKScene {
         practice == nil && recordsHistory && match.roundsPlayed >= 1
     }
 
-    private func askToQuit() {
+    /// Opens the in-game menu. The bots wait while it is up.
+    private func openGameMenu() {
         guard round != nil, practice == nil, overlay == nil else { return }
-        // Stop the bots while the question is up.
         generation += 1
-        overlay = .quitConfirm
+        stopDealAnimation()
+        overlay = .gameMenu
         rebuildOverlay()
     }
 
@@ -588,17 +739,10 @@ final class GameScene: SKScene {
 
     private func quitGame() {
         if quitWillCount {
-            history.add(GameRecord(
-                date: Date(),
-                target: settings.length.targetScore,
-                jokers: settings.jokers,
-                scores: match.scores,
-                rounds: match.roundsPlayed,
-                roundsWon: roundsWon,
-                quit: true
-            ))
-            HistoryStore.save(history)
+            recordQuit(of: match, roundsWon: roundsWon)
         }
+        clearSavedGame()
+        stopDealAnimation()
         Haptics.thump()
         generation += 1
         round = nil
@@ -703,12 +847,21 @@ final class GameScene: SKScene {
         playHaptic(for: move, by: actor, phase: phase)
         round = next
         selectedJoker = nil
+        saveProgress()
         advance()
     }
 
     /// Called just before `round` is replaced, so it still holds the position before the move.
     private func playHaptic(for move: Round.Move, by actor: Int, phase: Round.Phase) {
         guard let round else { return }
+        switch move {
+        case .play, .give:
+            Sounds.shared.play(.card)
+        case .joker(_, let face):
+            Sounds.shared.play(actor != 0 && round.hands[0].contains(.face(face)) ? .warning : .joker)
+        case .ask:
+            Sounds.shared.play(.ask)
+        }
         switch move {
         case .play:
             actor == 0 ? Haptics.tap() : Haptics.tick()
@@ -750,11 +903,27 @@ final class GameScene: SKScene {
             ))
             HistoryStore.save(history)
         }
+        if practice == nil && recordsHistory {
+            if match.isOver {
+                clearSavedGame()
+            } else {
+                saveProgress(roundRecorded: true)
+            }
+        }
         overlay = .summary(points: points, winner: winner)
         if match.isOver && practice == nil {
-            match.winners.contains(0) ? Haptics.victory(game: true) : Haptics.warning()
+            if match.winners.contains(0) {
+                Haptics.victory(game: true)
+                Sounds.shared.play(.bigWin)
+            } else {
+                Haptics.warning()
+                Sounds.shared.play(.warning)
+            }
+        } else if winner == 0 {
+            Haptics.victory(game: false)
+            Sounds.shared.play(.win)
         } else {
-            winner == 0 ? Haptics.victory(game: false) : Haptics.thump()
+            Haptics.thump()
         }
         refreshHUD()
         rebuildOverlay()
@@ -970,12 +1139,12 @@ final class GameScene: SKScene {
         } else {
             infoLabel.text = "You · \(count) card\(count == 1 ? "" : "s") · \(match.scores[0]) pts · game to \(settings.length.targetScore)"
             let quit = ButtonNode(
-                text: "Quit",
+                text: "Menu",
                 size: CGSize(width: 48 * m.u, height: 22 * m.u),
                 fontSize: 12 * m.u,
                 fill: SKColor(white: 1, alpha: 0.12),
                 textColor: .white
-            ) { [weak self] in self?.askToQuit() }
+            ) { [weak self] in self?.openGameMenu() }
             quit.name = "quitGame"
             quit.position = CGPoint(x: 12 * m.u + 24 * m.u, y: infoLabel.position.y)
             quit.zPosition = 400
@@ -1037,6 +1206,13 @@ final class GameScene: SKScene {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
+        if isDealing && overlay == nil {
+            // Any tap skips the deal.
+            generation += 1
+            stopDealAnimation()
+            advance()
+            return
+        }
         let hits = nodes(at: touch.location(in: self))
 
         if overlay != nil {
@@ -1045,12 +1221,14 @@ final class GameScene: SKScene {
                 .first { $0.inParentHierarchy(self.overlayLayer) }
             if let button {
                 Haptics.tap()
+                Sounds.shared.play(.tap)
                 button.action()
             }
             return
         }
         if let button = hits.lazy.compactMap({ self.ancestor(of: $0, as: ButtonNode.self) }).first {
             Haptics.tap()
+            Sounds.shared.play(.tap)
             button.action()
             return
         }
@@ -1111,6 +1289,7 @@ final class GameScene: SKScene {
 
     private func refuse(_ node: CardNode) {
         Haptics.warning()
+        Sounds.shared.play(.warning)
         refreshHUD()
         let nudge = 5 * metrics.u
         node.run(.sequence([
@@ -1153,7 +1332,9 @@ final class GameScene: SKScene {
         case .help: height = 470 * m.u
         case .summary: height = 350 * m.u
         case .jokerWarning: height = 250 * m.u
+        case .gameMenu: height = 330 * m.u
         case .quitConfirm: height = 250 * m.u
+        case .newGameConfirm: height = 250 * m.u
         }
         let panel = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 18 * m.u)
         panel.position = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -1174,8 +1355,12 @@ final class GameScene: SKScene {
             buildHelp(in: panel, width: width, page: page, m: m)
         case .summary(let points, let winner):
             buildSummary(in: panel, width: width, points: points, winner: winner, m: m)
+        case .gameMenu:
+            buildGameMenu(in: panel, width: width, m: m)
         case .quitConfirm:
             buildQuitConfirm(in: panel, width: width, m: m)
+        case .newGameConfirm:
+            buildNewGameConfirm(in: panel, width: width, m: m)
         case .jokerWarning(let move, let face):
             buildJokerWarning(in: panel, width: width, move: move, face: face, m: m)
         }
@@ -1248,12 +1433,44 @@ final class GameScene: SKScene {
             add(button, to: panel, x: CGFloat(count - 1) * (third.width + 12 * u), y: -29 * u)
         }
 
-        let deal = ButtonNode(
-            text: "Deal",
-            size: CGSize(width: width - 40 * u, height: 50 * u),
-            fontSize: 20 * u
-        ) { [weak self] in self?.startMatch() }
-        add(deal, to: panel, y: -103 * u)
+        if savedGame != nil {
+            // A game is waiting: resuming is the main action, and a new game replaces it.
+            let half = CGSize(width: (width - 52 * u) / 2, height: 50 * u)
+            let resume = ButtonNode(text: "Resume game", size: half, fontSize: 17 * u) { [weak self] in
+                self?.resumeGame()
+            }
+            add(resume, to: panel, x: -(half.width / 2 + 6 * u), y: -103 * u)
+            let fresh = ButtonNode(
+                text: "New game",
+                size: half,
+                fontSize: 17 * u,
+                fill: SKColor(white: 1, alpha: 0.12),
+                textColor: .white
+            ) { [weak self] in
+                self?.overlay = .newGameConfirm
+                self?.rebuildOverlay()
+            }
+            add(fresh, to: panel, x: half.width / 2 + 6 * u, y: -103 * u)
+        } else {
+            let deal = ButtonNode(
+                text: "Deal",
+                size: CGSize(width: width - 40 * u, height: 50 * u),
+                fontSize: 20 * u
+            ) { [weak self] in self?.startMatch() }
+            add(deal, to: panel, y: -103 * u)
+        }
+
+        let sound = ButtonNode(
+            text: Sounds.shared.isMuted ? "Sound off" : "Sound on",
+            size: CGSize(width: 76 * u, height: 22 * u),
+            fontSize: 11 * u,
+            fill: SKColor(white: 1, alpha: 0.12),
+            textColor: .white
+        ) { [weak self] in
+            Sounds.shared.isMuted.toggle()
+            self?.rebuildOverlay()
+        }
+        add(sound, to: panel, x: width / 2 - 50 * u, y: 247 * u)
 
         let small = CGSize(width: (width - 52 * u) / 2, height: 44 * u)
         let help = ButtonNode(
@@ -1584,7 +1801,8 @@ final class GameScene: SKScene {
         let size = CGSize(width: (width - 52 * u) / 2, height: 46 * u)
         let close: () -> Void = { [weak self] in
             UserDefaults.standard.set(true, forKey: HelpPage.seenKey)
-            self?.overlay = .menu
+            // Opened mid-game, the instructions go back to the game menu.
+            self?.overlay = self?.round != nil ? .gameMenu : .menu
             self?.rebuildOverlay()
         }
         let back = ButtonNode(
@@ -1688,6 +1906,73 @@ final class GameScene: SKScene {
             }
         }
         add(button, to: panel, y: -130 * u)
+    }
+
+    private func buildGameMenu(in panel: SKNode, width: CGFloat, m: Metrics) {
+        let u = m.u
+        add(Style.label("Game menu", size: 24 * u, font: Style.bold, color: Style.gold), to: panel, y: 125 * u)
+
+        let wide = CGSize(width: width - 40 * u, height: 46 * u)
+        let back = ButtonNode(text: "Back to game", size: wide, fontSize: 18 * u) { [weak self] in
+            self?.keepPlaying()
+        }
+        add(back, to: panel, y: 66 * u)
+
+        func secondary(_ text: String, y: CGFloat, action: @escaping () -> Void) {
+            let button = ButtonNode(
+                text: text,
+                size: wide,
+                fontSize: 17 * u,
+                fill: SKColor(white: 1, alpha: 0.12),
+                textColor: .white,
+                action: action
+            )
+            add(button, to: panel, y: y)
+        }
+        secondary(Sounds.shared.isMuted ? "Sound: off" : "Sound: on", y: 10 * u) { [weak self] in
+            Sounds.shared.isMuted.toggle()
+            self?.rebuildOverlay()
+        }
+        secondary("How to play", y: -46 * u) { [weak self] in
+            self?.overlay = .help(page: 0)
+            self?.rebuildOverlay()
+        }
+        secondary("Quit game", y: -102 * u) { [weak self] in
+            self?.overlay = .quitConfirm
+            self?.rebuildOverlay()
+        }
+    }
+
+    private func buildNewGameConfirm(in panel: SKNode, width: CGFloat, m: Metrics) {
+        let u = m.u
+        add(Style.label("Start a new game?", size: 22 * u, font: Style.bold, color: Style.gold), to: panel, y: 88 * u)
+
+        let counts = (savedGame?.match.roundsPlayed ?? 0) >= 1
+        let body = Style.label(
+            counts
+                ? "Your saved game will go in your history as a game you quit, which counts as finishing last."
+                : "Your saved game will be discarded. No round has finished, so it won't count in your history.",
+            size: 15 * u
+        )
+        body.numberOfLines = 0
+        body.preferredMaxLayoutWidth = width - 48 * u
+        add(body, to: panel, y: 26 * u)
+
+        let size = CGSize(width: (width - 52 * u) / 2, height: 46 * u)
+        let cancel = ButtonNode(text: "Cancel", size: size, fontSize: 16 * u) { [weak self] in
+            self?.overlay = .menu
+            self?.rebuildOverlay()
+        }
+        add(cancel, to: panel, x: -(size.width / 2 + 6 * u), y: -78 * u)
+
+        let fresh = ButtonNode(
+            text: "New game",
+            size: size,
+            fontSize: 16 * u,
+            fill: SKColor(white: 1, alpha: 0.12),
+            textColor: .white
+        ) { [weak self] in self?.replaceSavedGameWithNew() }
+        add(fresh, to: panel, x: size.width / 2 + 6 * u, y: -78 * u)
     }
 
     private func buildQuitConfirm(in panel: SKNode, width: CGFloat, m: Metrics) {
