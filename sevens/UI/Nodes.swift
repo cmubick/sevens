@@ -32,7 +32,7 @@ enum Style {
 
 extension Suit {
     /// The suit symbol forced to plain text so it never renders as an emoji.
-    var glyph: String { symbol + "\u{FE0E}" }
+    nonisolated var glyph: String { symbol + "\u{FE0E}" }
 
     var color: SKColor {
         switch self {
@@ -42,15 +42,15 @@ extension Suit {
     }
 
     /// Left-to-right order on the table and in the hand, alternating colors.
-    static let displayOrder: [Suit] = [.spades, .hearts, .clubs, .diamonds]
+    nonisolated static let displayOrder: [Suit] = [.spades, .hearts, .clubs, .diamonds]
 }
 
 extension Face {
-    var label: String { rankName + suit.glyph }
+    nonisolated var label: String { rankName + suit.glyph }
 }
 
 extension Card {
-    var label: String {
+    nonisolated var label: String {
         switch self {
         case .face(let face): face.label
         case .joker: "Joker"
