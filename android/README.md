@@ -2,6 +2,8 @@
 
 The Android port of the iOS game in `../sevens`. Kotlin, Gradle (Kotlin DSL), Jetpack Compose.
 
+Published by Tuesday Games. Contact: info@tuesdaygames.com. The app's ID, which Google Play and Android use to tell apps apart, is `com.tuesdaygames.sevens`; it cannot be changed once the app is on Google Play.
+
 ## Layout
 
 - `rules/` is the game itself: cards, the table, a round, a match, the bots, history and saved games, plus the scripted practice round. It is plain Kotlin with no Android in it, ported file for file from `../sevens/Rules` (and `../sevens/UI/Practice.swift`). Its tests are in `rules/src/test`.
@@ -30,13 +32,13 @@ Debug builds can skip the menu from the command line:
 
 ```bash
 ADB=~/Library/Android/sdk/platform-tools/adb
-$ADB shell am start -n io.chrisubick.sevens/.MainActivity --ei jokers 2 --ei target 50   # two jokers, game to 50
-$ADB shell am start -n io.chrisubick.sevens/.MainActivity --ez autoplay true            # bots play your hand too
-$ADB shell am start -n io.chrisubick.sevens/.MainActivity --es scenario joker           # a joker can replace a card you hold
-$ADB shell am start -n io.chrisubick.sevens/.MainActivity --ez unlocked true            # pretend the full game is owned (false: not owned)
+$ADB shell am start -n com.tuesdaygames.sevens/.MainActivity --ei jokers 2 --ei target 50   # two jokers, game to 50
+$ADB shell am start -n com.tuesdaygames.sevens/.MainActivity --ez autoplay true            # bots play your hand too
+$ADB shell am start -n com.tuesdaygames.sevens/.MainActivity --es scenario joker           # a joker can replace a card you hold
+$ADB shell am start -n com.tuesdaygames.sevens/.MainActivity --ez unlocked true            # pretend the full game is owned (false: not owned)
 ```
 
-Close the app first (`$ADB shell am force-stop io.chrisubick.sevens`) or the game already running carries on.
+Close the app first (`$ADB shell am force-stop com.tuesdaygames.sevens`) or the game already running carries on.
 
 Games started with these switches are never saved and never go in the history.
 
@@ -53,8 +55,8 @@ Up to five small files in the app's private files folder, which Android deletes 
 To look at them or start again from nothing on a debug build:
 
 ```bash
-$ADB shell run-as io.chrisubick.sevens ls files
-$ADB shell pm clear io.chrisubick.sevens      # wipes everything the app has saved
+$ADB shell run-as com.tuesdaygames.sevens ls files
+$ADB shell pm clear com.tuesdaygames.sevens      # wipes everything the app has saved
 ```
 
 `local.properties` tells Gradle where the SDK is. It is specific to this Mac and is not committed; Android Studio recreates it if it is missing.
@@ -67,7 +69,7 @@ Until the products exist in the Google Play Console the store screen says **Stor
 
 What has to be set up in the Play Console before a real purchase can be tested (this is Google's process and has not been tried with this app yet):
 
-1. Create the app in the Play Console with the package name `io.chrisubick.sevens`.
+1. Create the app in the Play Console with the package name `com.tuesdaygames.sevens`.
 2. Upload a signed release build to the **Internal testing** track. Google only lets an app sell things once a build that includes the billing library has been uploaded.
 3. Under the monetisation section, create four one-time products with exactly these IDs and activate them: `sevens.fullgame`, `sevens.tip.small`, `sevens.tip.medium`, `sevens.tip.large`. The tips' names shown under their prices come from here.
 4. Add your Google account as a **licence tester** (Play Console settings), so purchases are free test purchases, and as a tester on the internal track.

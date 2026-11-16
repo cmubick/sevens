@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "io.chrisubick.sevens"
+    namespace = "com.tuesdaygames.sevens"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "io.chrisubick.sevens"
+        applicationId = "com.tuesdaygames.sevens"
         minSdk = 26
         targetSdk = 37
         versionCode = 1
